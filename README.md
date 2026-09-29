@@ -80,6 +80,12 @@ manufacturer data. Linux (BlueZ) and Windows transmit it; macOS reports
 `ErrUnsupported`, CoreBluetooth's peripheral role carrying no manufacturer
 data.
 
+A driver's tests use `ble/bletest`: a `Peripheral` declares the
+characteristics the real unit presents, records every write, answers reads
+and pushes notifications, and a `Central` over a few of them stands in for
+the system's, so a family's fake unit is a peripheral with an `OnWrite`
+that keeps the unit's state.
+
 ## The wire, version 2
 
 Version 1 is the protocol the connector's `docs/UNITS.md` describes.
@@ -96,7 +102,7 @@ account (`no_driver`, `unsupported`) carry their code across as
 
 Tags are `vX.Y.Z`. Within a major version the exported API only grows
 (v0.2.0 added `Conn.Characteristics`, which a `ble.Conn` implementation
-of v0.1.0 must add);
+of v0.1.0 must add; v0.3.0 added `ble/bletest`);
 the connector pins the version it builds with, and a helper pins the one
 it was written against.
 
