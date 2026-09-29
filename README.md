@@ -68,8 +68,11 @@ connector drives the part it understands.
 `ble.Open` gives a `Central`. `Scan` reports every advertisement to a match
 function (a name, a name prefix, an advertised service, manufacturer data),
 `Connect` opens the one chosen and discovers its services, and the `Conn`
-writes, reads and subscribes by service and characteristic UUID. `MTU`
-says how much one write carries when the system knows.
+writes, reads and subscribes by service and characteristic UUID.
+`Characteristics` lists what was discovered under a service with what each
+allows (`ble.Find` picks the first that writes, or notifies), for a vendor
+service whose layout the driver does not know in advance. `MTU` says how
+much one write carries when the system knows.
 
 A device that never connects and only listens for advertisements is driven
 with `ble.OpenAdvertiser`: each command is a new `Broadcast` of
@@ -91,7 +94,9 @@ account (`no_driver`, `unsupported`) carry their code across as
 
 ## Versions
 
-Tags are `vX.Y.Z`. Within a major version the exported API only grows;
+Tags are `vX.Y.Z`. Within a major version the exported API only grows
+(v0.2.0 added `Conn.Characteristics`, which a `ble.Conn` implementation
+of v0.1.0 must add);
 the connector pins the version it builds with, and a helper pins the one
 it was written against.
 

@@ -107,10 +107,34 @@ type Central interface {
 	Close() error
 }
 
+// Properties are what a characteristic allows.
+type Properties struct {
+	Read, Write, WriteWithoutResponse, Notify, Indicate bool
+}
+
+// Writable says the characteristic takes a write of either kind.
+func (p Properties) Writable() bool { return p.Write || p.WriteWithoutResponse }
+
+// Notifies says the characteristic pushes values (notify or indicate).
+func (p Properties) Notifies() bool { return p.Notify || p.Indicate }
+
+// A Characteristic is one of a peripheral's, as Connect discovered it.
+type Characteristic struct {
+	UUID       UUID
+	Service    UUID
+	Properties Properties
+}
+
 // A Conn is one connected peripheral.
 type Conn interface {
 	ID() string
 	Name() string
+	// Characteristics lists the peripheral's characteristics under the
+	// service (every service when service is empty), in discovery order,
+	// with what each allows: how a driver finds the write and notify
+	// characteristics of a vendor service whose layout it does not know
+	// in advance.
+	Characteristics(service UUID) []Characteristic
 	// Write sends data to the characteristic, waiting for the peripheral's
 	// acknowledgment when withResponse is set.
 	Write(ctx context.Context, service, char UUID, data []byte, withResponse bool) error
@@ -168,6 +192,34 @@ type Advertiser interface {
 
 // ErrNoBroadcast says a Broadcast carried nothing the system can transmit.
 var ErrNoBroadcast = errors.New("ble: the broadcast has no manufacturer data, name or service")
+
+// filterCharacteristics is the backends' Characteristics: a copy of the
+// list, narrowed to the service when one is named.
+func filterCharacteristics(all []Characteristic, service UUID) []Characteristic {
+	out := make([]Characteristic, 0, len(all))
+	for _, c := range all {
+		if service == "" || c.Service.Equal(service) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Find is the first characteristic under service that allows all of want
+// (the true fields of want), and whether there is one.
+func Find(chars []Characteristic, service UUID, want Properties) (Characteristic, bool) {
+	for _, c := range chars {
+		if service != "" && !c.Service.Equal(service) {
+			continue
+		}
+		p := c.Properties
+		if want.Read && !p.Read || want.Write && !p.Write || want.WriteWithoutResponse && !p.WriteWithoutResponse || want.Notify && !p.Notify || want.Indicate && !p.Indicate {
+			continue
+		}
+		return c, true
+	}
+	return Characteristic{}, false
+}
 
 // ErrUnsupported says this system has no Bluetooth backend.
 var ErrUnsupported = errors.New("ble: Bluetooth is not supported on this system")

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -317,6 +318,7 @@ type conn struct {
 	open     bool
 	resolved chan struct{}
 	chars    map[string]dbus.ObjectPath // by canonical characteristic UUID
+	charList []Characteristic           // in discovery order
 	subs     map[dbus.ObjectPath]func([]byte)
 	io       sync.Mutex
 }
@@ -324,6 +326,13 @@ type conn struct {
 func (cn *conn) ID() string                    { return cn.id }
 func (cn *conn) Name() string                  { return cn.name }
 func (cn *conn) Disconnected() <-chan struct{} { return cn.disconnected }
+
+// Characteristics lists what Connect discovered under the service.
+func (cn *conn) Characteristics(service UUID) []Characteristic {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	return filterCharacteristics(cn.charList, service)
+}
 
 // MTU reads the ATT MTU bluetoothd reports on any of the device's
 // characteristics (the MTU property, BlueZ 5.62 and later) and takes the
@@ -414,8 +423,15 @@ func (cn *conn) discover(ctx context.Context) error {
 	}
 	cn.mu.Lock()
 	defer cn.mu.Unlock()
-	for path, ifaces := range objects {
-		props, ok := ifaces[ifaceChar]
+	// Object paths sort by service then characteristic, which is the
+	// device's own order.
+	paths := make([]dbus.ObjectPath, 0, len(objects))
+	for path := range objects {
+		paths = append(paths, path)
+	}
+	sort.Slice(paths, func(i, j int) bool { return paths[i] < paths[j] })
+	for _, path := range paths {
+		props, ok := objects[path][ifaceChar]
 		if !ok || !strings.HasPrefix(string(path), string(cn.path)+"/") {
 			continue
 		}
@@ -425,6 +441,28 @@ func (cn *conn) discover(ctx context.Context) error {
 		}
 		if _, dup := cn.chars[UUID(u).Canonical()]; !dup {
 			cn.chars[UUID(u).Canonical()] = path
+			var serviceUUID string
+			if sp, ok := props["Service"].Value().(dbus.ObjectPath); ok {
+				serviceUUID, _ = objects[sp][ifaceService]["UUID"].Value().(string)
+			}
+			var p Properties
+			if flags, ok := props["Flags"].Value().([]string); ok {
+				for _, f := range flags {
+					switch f {
+					case "read":
+						p.Read = true
+					case "write":
+						p.Write = true
+					case "write-without-response":
+						p.WriteWithoutResponse = true
+					case "notify":
+						p.Notify = true
+					case "indicate":
+						p.Indicate = true
+					}
+				}
+			}
+			cn.charList = append(cn.charList, Characteristic{UUID: UUID(UUID(u).Canonical()), Service: UUID(UUID(serviceUUID).Canonical()), Properties: p})
 		}
 	}
 	return nil

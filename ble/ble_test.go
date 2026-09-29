@@ -52,3 +52,32 @@ func TestManufacturerData(t *testing.T) {
 		t.Fatal("an advertisement without manufacturer data answered")
 	}
 }
+
+func TestFindCharacteristics(t *testing.T) {
+	chars := []Characteristic{
+		{UUID: "0000fff1-0000-1000-8000-00805f9b34fb", Service: "0000fff0-0000-1000-8000-00805f9b34fb", Properties: Properties{Notify: true}},
+		{UUID: "0000fff2-0000-1000-8000-00805f9b34fb", Service: "0000fff0-0000-1000-8000-00805f9b34fb", Properties: Properties{WriteWithoutResponse: true, Write: true}},
+		{UUID: "00002a19-0000-1000-8000-00805f9b34fb", Service: "0000180f-0000-1000-8000-00805f9b34fb", Properties: Properties{Read: true, Notify: true}},
+	}
+	if c, ok := Find(chars, "fff0", Properties{WriteWithoutResponse: true}); !ok || !c.UUID.Equal("fff2") {
+		t.Fatalf("write under fff0: %+v %v", c, ok)
+	}
+	if c, ok := Find(chars, "fff0", Properties{Notify: true}); !ok || !c.UUID.Equal("fff1") {
+		t.Fatalf("notify under fff0: %+v %v", c, ok)
+	}
+	if c, ok := Find(chars, "", Properties{Read: true}); !ok || !c.UUID.Equal("2a19") {
+		t.Fatalf("read anywhere: %+v %v", c, ok)
+	}
+	if _, ok := Find(chars, "fff0", Properties{Read: true}); ok {
+		t.Fatal("nothing under fff0 reads")
+	}
+	if got := filterCharacteristics(chars, "180F"); len(got) != 1 || !got[0].UUID.Equal("2a19") {
+		t.Fatalf("filter: %+v", got)
+	}
+	if got := filterCharacteristics(chars, ""); len(got) != 3 {
+		t.Fatalf("filter all: %d", len(got))
+	}
+	if !(Properties{Write: true}).Writable() || (Properties{Notify: true}).Writable() || !(Properties{Indicate: true}).Notifies() {
+		t.Fatal("property helpers")
+	}
+}
