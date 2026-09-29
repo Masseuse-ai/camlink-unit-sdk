@@ -1,0 +1,5 @@
+*.test
+*.out
+testdata/fuzz/
+.DS_Store
+/dist/
