@@ -66,7 +66,7 @@ var (
 		bytes, length, dataWithBytes, utf8String, stringWithUTF8String       objc.SEL
 		objectForKey, count, objectAtIndex, arrayWithObject                  objc.SEL
 		initWithUUIDString, uuidWithString, localizedDescription             objc.SEL
-		integerValue, maximumWriteValueLength                                objc.SEL
+		integerValue, maximumWriteValueLength, properties                    objc.SEL
 	}
 )
 
@@ -114,7 +114,7 @@ func load() error {
 			s.objectForKey, s.count, s.objectAtIndex, s.arrayWithObject = n("objectForKey:"), n("count"), n("objectAtIndex:"), n("arrayWithObject:")
 			s.initWithUUIDString, s.uuidWithString = n("initWithUUIDString:"), n("UUIDWithString:")
 			s.localizedDescription, s.integerValue = n("localizedDescription"), n("integerValue")
-			s.maximumWriteValueLength = n("maximumWriteValueLengthForType:")
+			s.maximumWriteValueLength, s.properties = n("maximumWriteValueLengthForType:"), n("properties")
 
 			cls, err := objc.RegisterClass("MasseuseCamlinkBLEDelegate", objc.GetClass("NSObject"), nil, nil, []objc.MethodDef{
 				{Cmd: n("centralManagerDidUpdateState:"), Fn: cbDidUpdateState},
@@ -511,6 +511,7 @@ type conn struct {
 	mu           sync.Mutex
 	open         bool
 	chars        map[string]objc.ID // by canonical characteristic UUID; retained
+	charList     []Characteristic   // in discovery order
 	servicesDone chan error
 	charsLeft    int
 	charsDone    chan error
@@ -540,6 +541,13 @@ func (cn *conn) isOpen() bool {
 
 // Disconnected is closed when the link drops.
 func (cn *conn) Disconnected() <-chan struct{} { return cn.disconnected }
+
+// Characteristics lists what Connect discovered under the service.
+func (cn *conn) Characteristics(service UUID) []Characteristic {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	return filterCharacteristics(cn.charList, service)
+}
 
 // MTU asks the peripheral object what one write without response carries;
 // CoreBluetooth knows once the link is up, and answers 0 before.
@@ -581,6 +589,7 @@ func (cn *conn) discover(ctx context.Context) error {
 		cn.mu.Lock()
 		defer cn.mu.Unlock()
 		for _, s := range services {
+			serviceUUID := attributeUUID(s)
 			for _, ch := range arrayItems(s.Send(sel.characteristics)) {
 				key := attributeUUID(ch).Canonical()
 				if _, dup := cn.chars[key]; dup {
@@ -588,6 +597,12 @@ func (cn *conn) discover(ctx context.Context) error {
 				}
 				ch.Send(sel.retain)
 				cn.chars[key] = ch
+				// CBCharacteristicProperties: broadcast 1, read 2, write
+				// without response 4, write 8, notify 16, indicate 32.
+				bits := objc.Send[uintptr](ch, sel.properties)
+				cn.charList = append(cn.charList, Characteristic{UUID: UUID(key), Service: UUID(serviceUUID.Canonical()), Properties: Properties{
+					Read: bits&2 != 0, WriteWithoutResponse: bits&4 != 0, Write: bits&8 != 0, Notify: bits&16 != 0, Indicate: bits&32 != 0,
+				}})
 			}
 		}
 	})

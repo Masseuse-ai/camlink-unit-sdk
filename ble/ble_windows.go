@@ -739,6 +739,7 @@ type conn struct {
 	linkLost bool
 	services []*gatt.GattDeviceService
 	chars    map[string]*gatt.GattCharacteristic // by canonical characteristic UUID
+	charList []Characteristic                    // in discovery order
 	subs     map[string]*subscription            // by canonical characteristic UUID
 	// io serializes writes, reads and subscriptions, as the other backends
 	// do: the unit answers one request at a time.
@@ -756,6 +757,13 @@ func (cn *conn) isOpen() bool {
 
 // Disconnected is closed when the link drops.
 func (cn *conn) Disconnected() <-chan struct{} { return cn.disconnected }
+
+// Characteristics lists what Connect discovered under the service.
+func (cn *conn) Characteristics(service UUID) []Characteristic {
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	return filterCharacteristics(cn.charList, service)
+}
 
 // MTU is the GATT session's largest PDU less the 3-byte ATT header, 0 when
 // the session is gone or does not say.
@@ -871,6 +879,10 @@ func (cn *conn) discoverCharacteristics(ctx context.Context, svc *gatt.GattDevic
 	if err != nil {
 		return fmt.Errorf("ble: discovering characteristics: %w", err)
 	}
+	var serviceUUID UUID
+	if g, err := svc.GetUuid(); err == nil {
+		serviceUUID = UUID(guidToUUID(g).Canonical())
+	}
 	cn.mu.Lock()
 	defer cn.mu.Unlock()
 	for _, item := range items {
@@ -886,6 +898,13 @@ func (cn *conn) discoverCharacteristics(ctx context.Context, svc *gatt.GattDevic
 			continue
 		}
 		cn.chars[key] = ch
+		// GattCharacteristicProperties: read 2, write without response 4,
+		// write 8, notify 16, indicate 32.
+		var p Properties
+		if bits, err := ch.GetCharacteristicProperties(); err == nil {
+			p = Properties{Read: bits&2 != 0, WriteWithoutResponse: bits&4 != 0, Write: bits&8 != 0, Notify: bits&16 != 0, Indicate: bits&32 != 0}
+		}
+		cn.charList = append(cn.charList, Characteristic{UUID: UUID(key), Service: serviceUUID, Properties: p})
 	}
 	return nil
 }
