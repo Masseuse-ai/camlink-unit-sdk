@@ -48,7 +48,10 @@ type Capabilities struct {
 	// LevelMax is the highest output level the connector will set, on the
 	// device's own intensity scale.
 	LevelMax int `json:"levelMax"`
-	// Channels the service may drive; the rest are pinned at zero.
+	// Channels the service may drive, by name ("a"; "a" and "b" on a
+	// two-channel device whose driver takes a level on each). A command
+	// for a channel not listed is refused by CheckCaps before the driver
+	// sees it, and the driver holds that channel at zero.
 	Channels []string `json:"channels"`
 	// Modes are the device's own program numbers the service may select.
 	Modes []int `json:"modes"`
@@ -76,6 +79,35 @@ func (c Capabilities) HasPowerMode(mode string) bool {
 		}
 	}
 	return false
+}
+
+// The intensity channels a command may name.
+const (
+	ChannelA = "a"
+	ChannelB = "b"
+)
+
+// HasChannel says whether the service may drive the channel. A device that
+// lists no channels drives channel A alone.
+func (c Capabilities) HasChannel(channel string) bool {
+	if len(c.Channels) == 0 {
+		return channel == ChannelA
+	}
+	for _, ch := range c.Channels {
+		if ch == channel {
+			return true
+		}
+	}
+	return false
+}
+
+// ChannelOf is the channel a level command names: channel A when it names
+// none, the way every command did before channel B was driven.
+func ChannelOf(cmd Command) string {
+	if cmd.Channel == "" {
+		return ChannelA
+	}
+	return cmd.Channel
 }
 
 // Identity names a unit for people in three parts, declared once by the
@@ -285,8 +317,10 @@ type RoutineState struct {
 //
 // The field names are the wire protocol's and are shared by every kind: a
 // single-channel device reports LevelB as 0 and the front-panel override
-// flags as false; one without a tempo control leaves the MA fields null;
-// one whose programs are fixed in firmware leaves the RoutineState nil.
+// flags as false; a two-channel device reports each channel's level, the
+// one the service drives and the one the person's own control moved; one
+// without a tempo control leaves the MA fields null; one whose programs
+// are fixed in firmware leaves the RoutineState nil.
 type Status struct {
 	Connected bool `json:"connected"`
 	// Port is where the device is attached: a serial port path, or the
@@ -335,8 +369,11 @@ type Frame struct {
 	SkipReason *string `json:"skipReason"`
 	Error      *string `json:"error,omitempty"`
 
-	Mode      *int `json:"mode,omitempty"`
-	LevelA    *int `json:"levelA,omitempty"`
+	Mode   *int `json:"mode,omitempty"`
+	LevelA *int `json:"levelA,omitempty"`
+	// LevelB rides in a two-channel device's frames; a single-channel
+	// device leaves it out.
+	LevelB    *int `json:"levelB,omitempty"`
 	LevelMA   *int `json:"levelMA,omitempty"`
 	MAPercent *int `json:"maPercent,omitempty"`
 	*RoutineState
@@ -358,9 +395,11 @@ type Command struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-// Result is what a command did.
+// Result is what a command did. A level command's result names the
+// channel it moved, so the service tells channel B's answer from A's.
 type Result struct {
 	Verb            string `json:"verb"`
+	Channel         string `json:"channel,omitempty"`
 	Released        bool   `json:"released,omitempty"`
 	Mode            *int   `json:"mode,omitempty"`
 	Level           *int   `json:"level,omitempty"`
@@ -638,7 +677,8 @@ var ErrNoDevice = errors.New("unit: no supported device found")
 var ErrArmed = errors.New("unit: the unit is armed; stop it first")
 
 // ParseCommand decodes a command and rejects the malformed: unknown verbs,
-// non-integer numbers, a channel other than A.
+// non-integer numbers, a channel that is neither A nor B. Whether the
+// device drives the channel named is CheckCaps's question.
 func ParseCommand(raw json.RawMessage) (Command, error) {
 	// Unknown fields are the service's business: a newer controller must not
 	// break an older connector, so only the known ones are read.
@@ -651,14 +691,16 @@ func ParseCommand(raw json.RawMessage) (Command, error) {
 	default:
 		return Command{}, fmt.Errorf("unit: unsupported command: %q", cmd.Verb)
 	}
-	if cmd.Channel != "" && cmd.Channel != "a" {
-		return Command{}, fmt.Errorf("unit: only channel A is controlled")
+	if cmd.Channel != "" && cmd.Channel != ChannelA && cmd.Channel != ChannelB {
+		return Command{}, fmt.Errorf("unit: channel must be %q or %q", ChannelA, ChannelB)
 	}
 	return cmd, nil
 }
 
 // CheckCaps enforces the connector's caps on an actuation command: the
-// device's, and the session's settings within them.
+// device's, and the session's settings within them. A level command for a
+// channel the device does not list is refused here, so a driver (or an
+// older helper) that drives channel A alone never sees a command for B.
 func CheckCaps(cmd Command, caps Capabilities, settings Settings) error {
 	switch cmd.Verb {
 	case "set_mode":
@@ -672,11 +714,17 @@ func CheckCaps(cmd Command, caps Capabilities, settings Settings) error {
 		}
 		return fmt.Errorf("mode is not allowed: %d", *cmd.Mode)
 	case "set_level":
+		if ch := ChannelOf(cmd); !caps.HasChannel(ch) {
+			return fmt.Errorf("channel %s is not driven on this device", ch)
+		}
 		levelMax := LevelMaxFor(caps, settings)
 		if cmd.Level == nil || *cmd.Level < 0 || *cmd.Level > levelMax {
 			return fmt.Errorf("level must be 0..%d", levelMax)
 		}
 	case "adjust_level":
+		if ch := ChannelOf(cmd); !caps.HasChannel(ch) {
+			return fmt.Errorf("channel %s is not driven on this device", ch)
+		}
 		if cmd.Delta == nil || *cmd.Delta == 0 || *cmd.Delta < -LevelDeltaCap || *cmd.Delta > LevelDeltaCap {
 			return fmt.Errorf("delta must be a non-zero integer from -%d to %d", LevelDeltaCap, LevelDeltaCap)
 		}
