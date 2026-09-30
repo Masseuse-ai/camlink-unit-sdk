@@ -55,7 +55,11 @@ on through failures. The connector calls it when a session ends, when the
 phone asks, and before it gives up on a link.
 
 A device that is an intensity channel or two on a program describes itself
-through `Capabilities` alone. A device with more, a second motor, a
+through `Capabilities` alone: `Channels` names the channels the connector
+may drive (`"a"`, or `"a"` and `"b"`), a level command names its channel
+(`Command.Channel`, A when it names none) and its result says which one it
+moved (`Result.Channel`); a command for a channel the device does not list
+is refused by `CheckCaps` before the driver sees it. A device with more, a second motor, a
 rotation, a heater, a light, a piston that takes a position, also
 implements `unit.Actuating` (and `unit.Sensing` for its inputs): it lists
 its `Actuators` once and takes `Actuate` commands against them, each

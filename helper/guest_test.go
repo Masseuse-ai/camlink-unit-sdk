@@ -16,8 +16,9 @@ import (
 	"github.com/Masseuse-ai/camlink-unit-sdk/unit"
 )
 
-// fakeDriver is a two-motor device with a battery: intensity channel A for
-// the connector of today, two actuators and a sensor for the model.
+// fakeDriver is a two-motor device with a battery: intensity channels A
+// and B (the motors) for the connector, two actuators and a sensor for the
+// model.
 type fakeDriver struct {
 	mu       sync.Mutex
 	levels   map[string]int
@@ -34,7 +35,15 @@ func (d *fakeDriver) Identity() unit.Identity {
 	return unit.Identity{Maker: "Fake", Model: "Two", Tag: "F1"}
 }
 func (d *fakeDriver) Capabilities() unit.Capabilities {
-	return unit.Capabilities{LevelMax: 20, Channels: []string{"a"}, Modes: []int{1}}
+	return unit.Capabilities{LevelMax: 20, Channels: []string{"a", "b"}, Modes: []int{1}}
+}
+
+// motorOf is the motor a level command drives: channel A the first, B the second.
+func motorOf(cmd unit.Command) string {
+	if unit.ChannelOf(cmd) == unit.ChannelB {
+		return "motor2"
+	}
+	return "motor1"
 }
 func (d *fakeDriver) Release(context.Context) error {
 	d.mu.Lock()
@@ -47,16 +56,17 @@ func (d *fakeDriver) Release(context.Context) error {
 }
 func (d *fakeDriver) Arm(context.Context, string) error { return nil }
 func (d *fakeDriver) Status(context.Context) (unit.Status, error) {
-	return unit.Status{Connected: true, LevelA: unit.Int(d.level("motor1"))}, nil
+	return unit.Status{Connected: true, LevelA: unit.Int(d.level("motor1")), LevelB: unit.Int(d.level("motor2"))}, nil
 }
 func (d *fakeDriver) Telemetry(context.Context) (unit.Frame, error) {
-	return unit.Frame{LevelA: unit.Int(d.level("motor1"))}, nil
+	return unit.Frame{LevelA: unit.Int(d.level("motor1")), LevelB: unit.Int(d.level("motor2"))}, nil
 }
 func (d *fakeDriver) Execute(_ context.Context, cmd unit.Command, levelMax int, _ func() bool) (unit.Result, error) {
+	motor := motorOf(cmd)
 	if cmd.Verb == "set_level" && cmd.Level != nil {
-		d.set("motor1", min(*cmd.Level, levelMax))
+		d.set(motor, min(*cmd.Level, levelMax))
 	}
-	return unit.Result{Verb: cmd.Verb, Level: unit.Int(d.level("motor1"))}, nil
+	return unit.Result{Verb: cmd.Verb, Channel: unit.ChannelOf(cmd), Level: unit.Int(d.level(motor))}, nil
 }
 func (d *fakeDriver) Close(context.Context, bool) error {
 	d.mu.Lock()
@@ -190,10 +200,19 @@ func TestGuestServesTheActuatorModel(t *testing.T) {
 		t.Fatalf("found's model: %+v %+v", found.Actuators, found.Sensors)
 	}
 
-	// The intensity path of today.
+	// The intensity path: a command naming no channel is A's; the channel
+	// rides across the pipe, and the result names it.
 	res := decode[helper.ExecuteResult](t, call(helper.MethodExecute, helper.ExecuteParams{Command: unit.Command{Verb: "set_level", Level: unit.Int(12)}, LevelMax: 10}))
-	if res.Result.Level == nil || *res.Result.Level != 10 || drv.level("motor1") != 10 {
+	if res.Result.Level == nil || *res.Result.Level != 10 || res.Result.Channel != unit.ChannelA || drv.level("motor1") != 10 {
 		t.Fatalf("execute: %+v, motor1 %d", res.Result, drv.level("motor1"))
+	}
+	res = decode[helper.ExecuteResult](t, call(helper.MethodExecute, helper.ExecuteParams{Command: unit.Command{Verb: "set_level", Channel: unit.ChannelB, Level: unit.Int(4)}, LevelMax: 10}))
+	if res.Result.Level == nil || *res.Result.Level != 4 || res.Result.Channel != unit.ChannelB || drv.level("motor2") != 4 || drv.level("motor1") != 10 {
+		t.Fatalf("execute on B: %+v, motor1 %d, motor2 %d", res.Result, drv.level("motor1"), drv.level("motor2"))
+	}
+	status := decode[helper.StatusResult](t, call(helper.MethodStatus, nil))
+	if status.Status.LevelB == nil || *status.Status.LevelB != 4 {
+		t.Fatalf("status without channel B: %+v", status.Status)
 	}
 
 	// The actuator path: checked against the driver's actuators.
