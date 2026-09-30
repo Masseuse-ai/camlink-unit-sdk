@@ -49,6 +49,21 @@ const Protocol = 2
 // directory: `camlink-unit-<name>` (`.exe` on Windows).
 const Prefix = "camlink-unit-"
 
+// The probe hints a helper may declare (Hello.Probe, Options.Probe): how
+// its finder identifies a unit on a port other families may share, so the
+// connector probes the gentler families before the ones that write a
+// command.
+const (
+	// ProbeListens: the finder listens for the unit's own signal and, on a
+	// silent port it must speak to, sends only bytes another family
+	// absorbs (the MK-312BT's sync zeros). Probed before ProbeWrites.
+	ProbeListens = "listens"
+	// ProbeWrites: the finder writes a command to identify its unit (the
+	// E-Stim 2B's status read). The default, and what an older helper that
+	// declares no hint is taken to be. Probed last.
+	ProbeWrites = "writes"
+)
+
 // Methods.
 const (
 	MethodHello     = "hello"
@@ -109,6 +124,11 @@ type Hello struct {
 	Name string `json:"name"`
 	// Kinds the helper's driver may report.
 	Kinds []unit.Kind `json:"kinds"`
+	// Probe says how this family's finder identifies a unit on a port
+	// other families may share, so the connector probes the gentler ones
+	// first (ProbeListens before ProbeWrites). Empty is ProbeWrites: a
+	// helper that predates the field, or one whose probe writes a command.
+	Probe string `json:"probe,omitempty"`
 }
 
 // Found is `find`'s answer: the device opened, as the Host needs to present

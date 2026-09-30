@@ -102,6 +102,18 @@ methods with the `unsupported` code. Errors the helper raises on its own
 account (`no_driver`, `unsupported`) carry their code across as
 `helper.CodedError`.
 
+`hello` may also carry a `probe` hint (`Options.Probe`, one of
+`ProbeListens` or `ProbeWrites`; absent means `ProbeWrites`): how the
+family's finder identifies a unit on a port other families may share, so
+the connector probes the gentler families first. A finder that listens
+for its unit's own signal and, on a silent port, speaks only bytes another
+family absorbs is `ProbeListens`; one that writes a command to identify
+its unit is `ProbeWrites`, and a family that shares a port kind with a
+gentler one declares it so the gentler one is tried first (two serial
+families on the same FTDI adapter: the one whose probe writes a command
+must not reach the other's device before it). A connector that does not
+read the hint keeps the order it had.
+
 ## Versions
 
 Tags are `vX.Y.Z`. Within a major version the exported API only grows
