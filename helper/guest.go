@@ -26,6 +26,13 @@ type Options struct {
 	Name string
 	// Kinds the finder's drivers may report.
 	Kinds []unit.Kind
+	// Probe is how this family's finder identifies a unit, for the
+	// connector's probing order on a shared port (Hello.Probe): ProbeListens
+	// for a finder that listens for the unit's own signal and speaks only
+	// bytes another family absorbs, ProbeWrites (the default) for one that
+	// writes a command. A family that shares a port kind with a gentler
+	// one declares ProbeWrites so the gentler one is tried first.
+	Probe string
 	Log   *slog.Logger
 }
 
@@ -197,7 +204,7 @@ func (g *guest) current() (unit.Driver, error) {
 func (g *guest) dispatch(ctx context.Context, env Envelope) (any, error) {
 	switch env.Method {
 	case MethodHello:
-		return Hello{Protocol: Protocol, Name: g.opts.Name, Kinds: g.opts.Kinds}, nil
+		return Hello{Protocol: Protocol, Name: g.opts.Name, Kinds: g.opts.Kinds, Probe: g.opts.Probe}, nil
 	case MethodDescribe:
 		var buf strings.Builder
 		err := g.finder.Describe(ctx, &buf)
